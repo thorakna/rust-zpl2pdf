@@ -1,0 +1,23 @@
+^XA
+^FX Synthetic Turkish domestic cargo style label (all data fictitious)
+^CI28
+^PW812
+^FO20,20^GB772,1170,4^FS
+^FO40,40^A0N,40,40^FDÖRNEK KARGO A.Ş.^FS
+^FO40,90^A0N,28,28^FDGönderici: Çağlar Şimşek Ltd. Şti.^FS
+^FO40,125^A0N,28,28^FDİstanbul / Kadıköy^FS
+^FO20,170^GB772,3,3^FS
+^FO40,190^A0N,30,30^FDALICI^FS
+^FO40,230^A0N,44,44^FDAyşe Yılmaz Güneş^FS
+^FO40,285^A0N,30,30^FB720,3,6,L^FDAtatürk Mah. Gül Sok. No: 12 Daire 3, Çankaya / ANKARA 06420 Tel: 0 (555) 000 00 00^FS
+^FO20,420^GB772,3,3^FS
+^BY3,3,140
+^FO80,450^BCN,140,Y,N,N^FD1234567890123^FS
+^FO40,660^BQN,2,6^FDQA,https://example.com/takip/1234567890123^FS
+^FO360,680^A0N,34,34^FDDesi: 3^FS
+^FO360,730^A0N,34,34^FDParça: 1/1^FS
+^FO360,780^A0N,34,34^FDÖdeme: Alıcı^FS
+^FO360,830^GB400,90,90^FS
+^FO380,845^A0N,64,64^FR^FDANK-06^FS
+^FO40,1000^A0N,24,24^FDKüçük harf testi: ğüşıöç ĞÜŞİÖÇ^FS
+^XZ

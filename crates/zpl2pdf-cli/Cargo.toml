@@ -1,0 +1,16 @@
+[package]
+name = "zpl2pdf-cli"
+description = "Command line tool converting ZPL labels to PDF or PNG"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "zpl2pdf"
+path = "src/main.rs"
+
+[dependencies]
+zpl2pdf.workspace = true
+clap = { version = "4.6", features = ["derive"] }

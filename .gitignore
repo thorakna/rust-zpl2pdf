@@ -1,0 +1,9 @@
+**/*.rs.bk
+*.orig.png
+/out
+/target
+tests/output/
+
+# Real shipping data, never commit
+/tests/test-zpls/
+/tests/result-pdfs/
