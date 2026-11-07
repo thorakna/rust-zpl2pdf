@@ -10,7 +10,7 @@ use tiny_skia::{FillRule, Mask, PathBuilder};
 use crate::Error;
 use crate::font;
 use crate::scene::{Item, Label, Paint, Path, Segment, TextRun};
-use crate::types::Transform;
+use crate::types::{Rotation, Transform};
 
 /// A rendered label: one byte per pixel, `1` = black.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -264,16 +264,21 @@ pub fn render(label: &Label) -> Raster {
         }
     }
     let mut raster = canvas.raster;
-    if label.inverted || label.mirrored {
+    if label.inverted || label.mirrored || label.rotation != Rotation::R0 {
         let t = label.page_transform();
-        let mut out = Raster::new(w, h);
+        let (ow, oh) = if label.rotation.swaps_axes() {
+            (h, w)
+        } else {
+            (w, h)
+        };
+        let mut out = Raster::new(ow, oh);
         for y in 0..h {
             for x in 0..w {
                 if raster.get(x, y) {
                     let (nx, ny) = t.apply(x as f64 + 0.5, y as f64 + 0.5);
                     let (nx, ny) = (nx.floor() as i64, ny.floor() as i64);
-                    if nx >= 0 && ny >= 0 && (nx as u32) < w && (ny as u32) < h {
-                        out.pixels[(ny as u32 * w + nx as u32) as usize] = 1;
+                    if nx >= 0 && ny >= 0 && (nx as u32) < ow && (ny as u32) < oh {
+                        out.pixels[(ny as u32 * ow + nx as u32) as usize] = 1;
                     }
                 }
             }

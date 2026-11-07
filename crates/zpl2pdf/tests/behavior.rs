@@ -3,7 +3,7 @@
 
 use proptest::prelude::*;
 use zpl2pdf::scene::{Item, Paint};
-use zpl2pdf::{Error, Options};
+use zpl2pdf::{Error, Options, Rotation};
 
 fn render(zpl: &str) -> zpl2pdf::Rendered {
     zpl2pdf::render(zpl.as_bytes(), &Options::default()).expect("renders")
@@ -30,6 +30,85 @@ fn page_size_follows_options() {
     };
     let r = zpl2pdf::render(b"^XA^FO10,10^GB50,50,50^FS^XZ", &opts).unwrap();
     assert_eq!((r.labels[0].width, r.labels[0].height), (600.0, 300.0));
+}
+
+/// Renders a 2x1 inch label (406x203 dots) with `rotation` degrees.
+fn rotated(zpl: &str, degrees: u16) -> zpl2pdf::raster::Raster {
+    let opts = Options {
+        width: 2.0,
+        height: 1.0,
+        rotation: Rotation::from_degrees(degrees).unwrap(),
+        ..Default::default()
+    };
+    let r = zpl2pdf::render(zpl.as_bytes(), &opts).unwrap();
+    zpl2pdf::raster::render(&r.labels[0])
+}
+
+#[test]
+fn output_rotation_turns_the_page_clockwise() {
+    // A filled 50x20 box in the top left corner.
+    let zpl = "^XA^FO0,0^GB50,20,20^FS^XZ";
+    // (degrees, page size, inside the box, outside the box)
+    let cases = [
+        (0, (406, 203), [(1, 1), (48, 18)], (52, 1)),
+        (90, (203, 406), [(202, 1), (184, 48)], (1, 1)),
+        (180, (406, 203), [(405, 202), (357, 184)], (1, 1)),
+        (270, (203, 406), [(1, 405), (18, 357)], (1, 1)),
+    ];
+    for (deg, size, inside, outside) in cases {
+        let img = rotated(zpl, deg);
+        assert_eq!((img.width, img.height), size, "{deg}");
+        for (x, y) in inside {
+            assert!(img.get(x, y), "{deg}: ({x}, {y}) should be black");
+        }
+        assert!(
+            !img.get(outside.0, outside.1),
+            "{deg}: {outside:?} should be white"
+        );
+        let black = img.pixels.iter().filter(|&&p| p != 0).count();
+        assert_eq!(black, 50 * 20, "{deg}: pixels lost or duplicated");
+    }
+}
+
+#[test]
+fn output_rotation_applies_after_print_orientation() {
+    // ^PO I turns the label by 180 first, so 90 more equals 270 in total.
+    let plain = rotated("^XA^FO0,0^GB50,20,20^FS^XZ", 270);
+    let inverted = rotated("^XA^POI^FO0,0^GB50,20,20^FS^XZ", 90);
+    assert_eq!(plain.pixels, inverted.pixels);
+}
+
+#[test]
+fn output_rotation_swaps_the_pdf_page() {
+    let media_box = |degrees| {
+        let opts = Options {
+            width: 2.0,
+            height: 1.0,
+            rotation: Rotation::from_degrees(degrees).unwrap(),
+            ..Default::default()
+        };
+        let pdf = zpl2pdf::zpl_to_pdf(b"^XA^FO0,0^GB50,20,20^FS^XZ", &opts)
+            .unwrap()
+            .pdf;
+        let text = String::from_utf8_lossy(&pdf).into_owned();
+        let start = text.find("/MediaBox [").unwrap();
+        text[start..start + text[start..].find(']').unwrap() + 1].to_string()
+    };
+    assert_eq!(media_box(0), "/MediaBox [0 0 144 72]");
+    assert_eq!(media_box(90), "/MediaBox [0 0 72 144]");
+    assert_eq!(media_box(180), "/MediaBox [0 0 144 72]");
+    assert_eq!(media_box(270), "/MediaBox [0 0 72 144]");
+}
+
+#[test]
+fn rotation_parsing() {
+    assert_eq!("90".parse::<Rotation>().unwrap(), Rotation::R90);
+    assert_eq!(" 270 ".parse::<Rotation>().unwrap(), Rotation::R270);
+    assert_eq!("0".parse::<Rotation>().unwrap(), Rotation::R0);
+    for bad in ["45", "-90", "360", "", "abc"] {
+        assert!(bad.parse::<Rotation>().is_err(), "{bad:?}");
+    }
+    assert_eq!(Rotation::R180.to_string(), "180");
 }
 
 #[test]

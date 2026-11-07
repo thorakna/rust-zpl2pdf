@@ -27,6 +27,87 @@ impl Orientation {
     }
 }
 
+/// Clockwise rotation of the whole output page, like Labelary's
+/// `X-Rotation` header. Unlike `^PO` and field orientations it is not part of
+/// the ZPL; it turns the finished label, swapping page width and height for
+/// 90 and 270 degrees.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub enum Rotation {
+    /// No rotation.
+    #[default]
+    R0,
+    /// 90 degrees clockwise.
+    R90,
+    /// 180 degrees.
+    R180,
+    /// 270 degrees clockwise (90 counterclockwise).
+    R270,
+}
+
+impl Rotation {
+    /// The rotation for 0, 90, 180 or 270 degrees.
+    pub fn from_degrees(degrees: u16) -> Option<Self> {
+        match degrees {
+            0 => Some(Self::R0),
+            90 => Some(Self::R90),
+            180 => Some(Self::R180),
+            270 => Some(Self::R270),
+            _ => None,
+        }
+    }
+
+    /// The angle in degrees.
+    pub fn degrees(self) -> u16 {
+        match self {
+            Self::R0 => 0,
+            Self::R90 => 90,
+            Self::R180 => 180,
+            Self::R270 => 270,
+        }
+    }
+
+    /// Whether width and height trade places.
+    pub fn swaps_axes(self) -> bool {
+        matches!(self, Self::R90 | Self::R270)
+    }
+
+    /// Maps a `w` x `h` page (y down) onto the rotated page.
+    pub fn transform(self, w: f64, h: f64) -> Transform {
+        let t = |a, b, c, d, e, f| Transform { a, b, c, d, e, f };
+        match self {
+            Self::R0 => Transform::IDENTITY,
+            // (x, y) -> (h - y, x)
+            Self::R90 => t(0.0, 1.0, -1.0, 0.0, h, 0.0),
+            // (x, y) -> (w - x, h - y)
+            Self::R180 => t(-1.0, 0.0, 0.0, -1.0, w, h),
+            // (x, y) -> (y, w - x)
+            Self::R270 => t(0.0, -1.0, 1.0, 0.0, 0.0, w),
+        }
+    }
+}
+
+impl std::fmt::Display for Rotation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.degrees())
+    }
+}
+
+impl std::str::FromStr for Rotation {
+    type Err = crate::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.trim()
+            .parse::<u16>()
+            .ok()
+            .and_then(Self::from_degrees)
+            .ok_or_else(|| {
+                crate::Error::InvalidOptions(format!(
+                    "invalid rotation {s:?}, use 0, 90, 180 or 270"
+                ))
+            })
+    }
+}
+
 /// Drawing color of a graphic element.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
 pub enum LineColor {

@@ -38,6 +38,10 @@ struct Args {
     #[arg(long)]
     quantity: bool,
 
+    /// Rotate the output clockwise by 0, 90, 180 or 270 degrees.
+    #[arg(long, default_value_t = zpl2pdf::Rotation::R0, value_parser = parse_rotation)]
+    rotate: zpl2pdf::Rotation,
+
     /// Do not print warnings.
     #[arg(short, long)]
     quiet: bool,
@@ -63,6 +67,14 @@ fn parse_size(s: &str) -> Result<(f64, f64), String> {
     Ok((w * factor, h * factor))
 }
 
+fn parse_rotation(s: &str) -> Result<zpl2pdf::Rotation, String> {
+    s.trim()
+        .parse::<u16>()
+        .ok()
+        .and_then(zpl2pdf::Rotation::from_degrees)
+        .ok_or_else(|| "use 0, 90, 180 or 270".to_string())
+}
+
 fn run(args: Args) -> Result<(), String> {
     let (width, height) = parse_size(&args.size)?;
     let opts = zpl2pdf::Options {
@@ -71,6 +83,7 @@ fn run(args: Args) -> Result<(), String> {
         height,
         label_index: args.index,
         honor_quantity: args.quantity,
+        rotation: args.rotate,
         ..Default::default()
     };
     let stdin_input = args.input.as_deref().is_none_or(|p| p == Path::new("-"));
@@ -155,7 +168,15 @@ fn main() -> ExitCode {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_size;
+    use super::{parse_rotation, parse_size};
+
+    #[test]
+    fn rotations() {
+        assert_eq!(parse_rotation("90").unwrap(), zpl2pdf::Rotation::R90);
+        assert_eq!(parse_rotation("0").unwrap(), zpl2pdf::Rotation::R0);
+        assert!(parse_rotation("45").is_err());
+        assert!(parse_rotation("x").is_err());
+    }
 
     #[test]
     fn sizes() {

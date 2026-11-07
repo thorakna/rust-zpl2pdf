@@ -2788,7 +2788,7 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[package]]
 name = "zpl2pdf"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "base64",
  "encoding_rs",
@@ -2807,7 +2807,7 @@ dependencies = [
 
 [[package]]
 name = "zpl2pdf-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "zpl2pdf",
@@ -2815,7 +2815,7 @@ dependencies = [
 
 [[package]]
 name = "zpl2pdf-server"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "axum",
  "clap",

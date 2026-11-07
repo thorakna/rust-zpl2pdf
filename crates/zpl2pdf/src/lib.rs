@@ -26,6 +26,7 @@ pub mod types;
 
 pub use error::Error;
 pub use scene::Label;
+pub use types::Rotation;
 
 /// Resource limits, mainly for untrusted input.
 #[derive(Debug, Clone)]
@@ -61,6 +62,8 @@ pub struct Options {
     pub label_index: Option<usize>,
     /// Repeat labels according to `^PQ`.
     pub honor_quantity: bool,
+    /// Clockwise rotation of the output pages (Labelary's `X-Rotation`).
+    pub rotation: Rotation,
     /// Resource limits.
     pub limits: Limits,
 }
@@ -73,6 +76,7 @@ impl Default for Options {
             height: 6.0,
             label_index: None,
             honor_quantity: false,
+            rotation: Rotation::R0,
             limits: Limits::default(),
         }
     }

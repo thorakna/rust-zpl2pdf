@@ -4,3 +4,4 @@ out
 tests
 tools
 .env
+k8s

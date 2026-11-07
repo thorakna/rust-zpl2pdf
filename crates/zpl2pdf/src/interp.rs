@@ -759,6 +759,7 @@ impl<'a> Interpreter<'a> {
             clip,
             inverted: s.inverted,
             mirrored: s.mirrored,
+            rotation: self.opts.rotation,
         };
         let copies = if self.opts.honor_quantity {
             state.quantity.max(1) as usize

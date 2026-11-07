@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use crate::font::{PlacedGlyph, ResolvedFont};
 use crate::graphic::Bitmap;
-use crate::types::Transform;
+use crate::types::{Rotation, Transform};
 
 /// How an item is painted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -255,6 +255,10 @@ pub struct Label {
     pub inverted: bool,
     /// `^PM Y`: the label is mirrored horizontally.
     pub mirrored: bool,
+    /// Rotation of the output page, applied after `^PO` and `^PM`.
+    /// `width` and `height` stay those of the unrotated label; see
+    /// [`Label::page_size`].
+    pub rotation: Rotation,
 }
 
 impl Item {
@@ -272,7 +276,17 @@ impl Item {
 }
 
 impl Label {
-    /// Transform applied to the whole label (print orientation and mirror).
+    /// Output page size in dots, after [`Label::rotation`].
+    pub fn page_size(&self) -> (f64, f64) {
+        if self.rotation.swaps_axes() {
+            (self.height, self.width)
+        } else {
+            (self.width, self.height)
+        }
+    }
+
+    /// Transform from label dots to output page dots (print orientation,
+    /// mirror and rotation).
     pub fn page_transform(&self) -> Transform {
         let mut t = Transform::IDENTITY;
         if self.mirrored {
@@ -291,7 +305,7 @@ impl Label {
                 ..Transform::IDENTITY
             });
         }
-        t
+        t.then(&self.rotation.transform(self.width, self.height))
     }
 }
 

@@ -4,8 +4,12 @@
 //! - `POST /v1/printers/{dpmm}dpmm/labels/{w}x{h}/[{index}/]`: Labelary
 //!   compatible. The response format follows the `Accept` header
 //!   (`application/pdf` by default, `image/png` renders one label).
-//! - `POST /v1/convert?dpmm=8&width=4&height=6&format=pdf|png&index=0`.
+//! - `POST /v1/convert?dpmm=8&width=4&height=6&format=pdf|png&index=0&rotation=90`.
 //! - `GET /health`.
+//!
+//! The optional `X-Rotation: 0|90|180|270` header (Labelary compatible)
+//! turns the output clockwise; on `/v1/convert` the `rotation` query
+//! parameter takes precedence over it.
 //!
 //! When `ZPL2PDF_AUTH_TOKEN` (or `--auth-token`) is set to a non empty value,
 //! the conversion routes require `Authorization: Bearer <token>`; `/health`
@@ -88,6 +92,7 @@ struct Request {
     height: f64,
     index: Option<usize>,
     format: Format,
+    rotation: zpl2pdf::Rotation,
 }
 
 fn error(status: StatusCode, message: impl Into<String>) -> Response {
@@ -158,6 +163,29 @@ fn parse_size(s: &str) -> Result<(f64, f64), String> {
     Ok((w.parse().map_err(|_| bad())?, h.parse().map_err(|_| bad())?))
 }
 
+fn parse_rotation(name: &str, value: &str) -> Result<zpl2pdf::Rotation, String> {
+    value
+        .trim()
+        .parse::<u16>()
+        .ok()
+        .and_then(zpl2pdf::Rotation::from_degrees)
+        .ok_or_else(|| format!("invalid {name} {value:?}, use 0, 90, 180 or 270"))
+}
+
+/// The optional `X-Rotation` header; absent or empty means no rotation.
+fn rotation_from_headers(headers: &HeaderMap) -> Result<zpl2pdf::Rotation, String> {
+    let Some(value) = headers.get("X-Rotation") else {
+        return Ok(zpl2pdf::Rotation::R0);
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| "invalid X-Rotation header".to_string())?;
+    if value.trim().is_empty() {
+        return Ok(zpl2pdf::Rotation::R0);
+    }
+    parse_rotation("X-Rotation", value)
+}
+
 fn format_from_accept(headers: &HeaderMap) -> Format {
     let accept = headers
         .get(header::ACCEPT)
@@ -181,6 +209,7 @@ async fn convert(state: Arc<AppState>, req: Request, body: Bytes) -> Response {
             None
         }),
         honor_quantity: false,
+        rotation: req.rotation,
         limits: zpl2pdf::Limits {
             max_labels: state.config.max_labels,
             max_graphic_bytes: state.config.max_graphic,
@@ -286,6 +315,10 @@ async fn labelary_impl(
         Ok(v) => v,
         Err(message) => return error(StatusCode::BAD_REQUEST, message),
     };
+    let rotation = match rotation_from_headers(headers) {
+        Ok(r) => r,
+        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+    };
     let format = format_from_accept(headers);
     convert(
         state,
@@ -295,6 +328,7 @@ async fn labelary_impl(
             height,
             index,
             format,
+            rotation,
         },
         body,
     )
@@ -308,6 +342,7 @@ struct ConvertQuery {
     height: Option<f64>,
     format: Option<String>,
     index: Option<usize>,
+    rotation: Option<String>,
 }
 
 async fn convert_query(
@@ -322,12 +357,21 @@ async fn convert_query(
         Some(other) => return error(StatusCode::BAD_REQUEST, format!("unknown format {other:?}")),
         None => format_from_accept(&headers),
     };
+    let rotation = match q.rotation.as_deref() {
+        Some(value) => parse_rotation("rotation", value),
+        None => rotation_from_headers(&headers),
+    };
+    let rotation = match rotation {
+        Ok(r) => r,
+        Err(message) => return error(StatusCode::BAD_REQUEST, message),
+    };
     let req = Request {
         dpmm: q.dpmm.unwrap_or(8),
         width: q.width.unwrap_or(4.0),
         height: q.height.unwrap_or(6.0),
         index: q.index,
         format,
+        rotation,
     };
     convert(state, req, body).await
 }
@@ -420,6 +464,76 @@ mod tests {
             .body(Body::from(body.to_string()))
             .unwrap();
         app(test_config()).oneshot(req).await.unwrap()
+    }
+
+    /// Status and body for a request with extra headers.
+    async fn send_with(uri: &str, headers: &[(&str, &str)]) -> (StatusCode, Vec<u8>) {
+        let mut req = HttpRequest::post(uri);
+        for (name, value) in headers {
+            req = req.header(*name, *value);
+        }
+        let res = app(test_config())
+            .oneshot(req.body(Body::from(ZPL)).unwrap())
+            .await
+            .unwrap();
+        let status = res.status();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        (status, body.to_vec())
+    }
+
+    fn png_size(png: &[u8]) -> (u32, u32) {
+        assert!(png.starts_with(b"\x89PNG"), "not a PNG");
+        let be = |i: usize| u32::from_be_bytes(png[i..i + 4].try_into().unwrap());
+        (be(16), be(20))
+    }
+
+    #[tokio::test]
+    async fn rotation_header_is_optional() {
+        let uri = "/v1/printers/8dpmm/labels/4x6/0/";
+        let png = |rotation: Option<&'static str>| async move {
+            let mut headers = vec![("Accept", "image/png")];
+            if let Some(r) = rotation {
+                headers.push(("X-Rotation", r));
+            }
+            send_with(uri, &headers).await
+        };
+        for rotation in [None, Some("0"), Some(""), Some("180")] {
+            let (status, body) = png(rotation).await;
+            assert_eq!(status, StatusCode::OK, "{rotation:?}");
+            assert_eq!(png_size(&body), (812, 1218), "{rotation:?}");
+        }
+        for rotation in ["90", " 270 "] {
+            let (status, body) = png(Some(rotation)).await;
+            assert_eq!(status, StatusCode::OK, "{rotation:?}");
+            assert_eq!(png_size(&body), (1218, 812), "{rotation:?}");
+        }
+        for rotation in ["45", "-90", "abc"] {
+            let (status, body) = png(Some(rotation)).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{rotation:?}");
+            assert!(String::from_utf8_lossy(&body).contains("X-Rotation"));
+        }
+        let (status, body) = send_with(
+            "/v1/printers/8dpmm/labels/4x6/",
+            &[("Accept", "application/pdf"), ("X-Rotation", "90")],
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(String::from_utf8_lossy(&body).contains("/MediaBox [0 0 432 288]"));
+    }
+
+    #[tokio::test]
+    async fn rotation_query_overrides_header() {
+        let (_, body) = send_with("/v1/convert?format=png&rotation=90", &[]).await;
+        assert_eq!(png_size(&body), (1218, 812));
+        let (_, body) = send_with("/v1/convert?format=png", &[("X-Rotation", "270")]).await;
+        assert_eq!(png_size(&body), (1218, 812));
+        let (_, body) =
+            send_with("/v1/convert?format=png&rotation=0", &[("X-Rotation", "90")]).await;
+        assert_eq!(png_size(&body), (812, 1218));
+        let (status, _) = send_with("/v1/convert?format=png&rotation=45", &[]).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 
     fn auth_config(token: &str) -> Config {

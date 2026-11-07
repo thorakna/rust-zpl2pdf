@@ -7,6 +7,9 @@ tests/output/
 # Local settings with secrets; example.env is the template
 .env
 
+# Kubernetes manifests with real secrets, kept local
+/k8s/
+
 # Real shipping data, never commit
 /tests/test-zpls/
 /tests/result-pdfs/

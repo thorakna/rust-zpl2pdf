@@ -33,7 +33,8 @@ cat label.zpl | target/release/zpl2pdf - > label.pdf
 
 CLI options: `--dpmm 6|8|12|24`, `--size WxH` in inches or `WxHmm`,
 `--index N` to pick one label, `--quantity` to repeat labels by `^PQ`,
-`--quiet` to hide warnings.
+`--rotate 0|90|180|270` to turn the output clockwise, `--quiet` to hide
+warnings.
 
 ### Library
 
@@ -62,8 +63,14 @@ target/release/zpl2pdf-server --listen 0.0.0.0:8080
 |---|---|
 | `POST /v1/printers/{8dpmm}/labels/{4x6}/` | Labelary compatible. `Accept: application/pdf` (default) returns all labels, `Accept: image/png` the first one |
 | `POST /v1/printers/{8dpmm}/labels/{4x6}/{index}/` | One label |
-| `POST /v1/convert?dpmm=8&width=4&height=6&format=pdf&index=0` | Query string variant |
+| `POST /v1/convert?dpmm=8&width=4&height=6&format=pdf&index=0&rotation=90` | Query string variant |
 | `GET /health` | Liveness check |
+
+**Rotation:** the optional `X-Rotation: 0|90|180|270` header (as in
+Labelary) turns the output clockwise; 90 and 270 swap the page width and
+height. It applies on top of `^PO` and `^PM`, PDF output stays vector. Without
+the header nothing is rotated. On `/v1/convert` the `rotation` query parameter
+wins over the header. Other values answer `400 Bad Request`.
 
 The body is the raw ZPL. Responses carry `X-Total-Count` (labels in the input)
 and `X-Warnings`. Existing Labelary integrations only need a new base URL.

@@ -124,7 +124,8 @@ pub fn write_pdf(labels: &[Label], meta: &PdfMeta) -> Result<Vec<u8>, Error> {
         page_ids.push(page_id);
 
         let scale = 72.0 / label.dpi;
-        let (w_pt, h_pt) = ((label.width * scale) as f32, (label.height * scale) as f32);
+        let (page_w, page_h) = label.page_size();
+        let (w_pt, h_pt) = ((page_w * scale) as f32, (page_h * scale) as f32);
         let content = page_content(label, &fonts, &image_index)?;
         let compressed = compress(&content);
         pdf.stream(content_id, &compressed)
@@ -229,14 +230,14 @@ fn page_content(
     let mut c = Content::new();
     let scale = 72.0 / label.dpi;
     c.save_state();
-    // Dots, y down.
+    // Page dots, y down.
     c.transform([
         scale as f32,
         0.0,
         0.0,
         -scale as f32,
         0.0,
-        (label.height * scale) as f32,
+        (label.page_size().1 * scale) as f32,
     ]);
     c.transform(matrix(&label.page_transform()));
     // White paper: needed as backdrop for the Difference blend mode.
