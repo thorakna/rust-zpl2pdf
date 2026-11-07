@@ -72,15 +72,24 @@ Settings (flags or environment variables): `--listen` / `ZPL2PDF_LISTEN`,
 `--max-body` / `ZPL2PDF_MAX_BODY` (8 MiB), `--max-labels` /
 `ZPL2PDF_MAX_LABELS` (200), `--max-graphic` / `ZPL2PDF_MAX_GRAPHIC` (8 MiB
 decoded), `--concurrency` / `ZPL2PDF_CONCURRENCY` (CPU count), `--timeout` /
-`ZPL2PDF_TIMEOUT` (30 s). Conversions run on blocking threads behind a
-semaphore, so slow requests cannot starve the async runtime.
+`ZPL2PDF_TIMEOUT` (30 s), `--auth-token` / `ZPL2PDF_AUTH_TOKEN` (empty).
+Conversions run on blocking threads behind a semaphore, so slow requests
+cannot starve the async runtime. [`example.env`](example.env) lists every
+setting.
+
+**Authorization:** when `ZPL2PDF_AUTH_TOKEN` is not empty, the conversion
+routes require `Authorization: Bearer <token>` (the bare token is accepted
+too) and answer `401 Unauthorized` otherwise. `/health` stays open. Leave the
+variable empty or unset to disable the check.
 
 Docker:
 
 ```sh
 docker build -t zpl2pdf .
-docker run --rm -p 8080:8080 zpl2pdf
+cp example.env .env   # set ZPL2PDF_AUTH_TOKEN here
+docker run --rm -p 8080:8080 --env-file .env zpl2pdf
 curl --data-binary @label.zpl -H "Accept: application/pdf" \
+     -H "Authorization: Bearer $ZPL2PDF_AUTH_TOKEN" \
      http://localhost:8080/v1/printers/8dpmm/labels/4x6/ -o label.pdf
 ```
 

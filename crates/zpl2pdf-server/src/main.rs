@@ -7,6 +7,10 @@
 //! - `POST /v1/convert?dpmm=8&width=4&height=6&format=pdf|png&index=0`.
 //! - `GET /health`.
 //!
+//! When `ZPL2PDF_AUTH_TOKEN` (or `--auth-token`) is set to a non empty value,
+//! the conversion routes require `Authorization: Bearer <token>`; `/health`
+//! stays open.
+//!
 //! The request body is the raw ZPL. Rendering runs on blocking threads with
 //! a concurrency limit; body size, label count and graphic sizes are limited.
 
@@ -18,6 +22,7 @@ use axum::Router;
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use clap::Parser;
@@ -50,6 +55,20 @@ struct Config {
     /// Request timeout in seconds.
     #[arg(long, env = "ZPL2PDF_TIMEOUT", default_value_t = 30)]
     timeout: u64,
+    /// Token required as `Authorization: Bearer <token>` on the conversion
+    /// routes. Empty or unset disables the check.
+    #[arg(long, env = "ZPL2PDF_AUTH_TOKEN", hide_env_values = true)]
+    auth_token: Option<String>,
+}
+
+impl Config {
+    /// The configured token, `None` when authorization is disabled.
+    fn auth_token(&self) -> Option<&str> {
+        self.auth_token
+            .as_deref()
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+    }
 }
 
 struct AppState {
@@ -78,6 +97,49 @@ fn error(status: StatusCode, message: impl Into<String>) -> Response {
         message.into(),
     )
         .into_response()
+}
+
+/// Compares without an early exit so the time taken does not reveal how many
+/// leading bytes of the token matched.
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let diff = a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y));
+    std::hint::black_box(diff) == 0
+}
+
+/// Accepts `Authorization: Bearer <token>` (scheme case insensitive) or the
+/// bare token.
+fn is_authorized(headers: &HeaderMap, token: &str) -> bool {
+    let Some(value) = headers.get(header::AUTHORIZATION) else {
+        return false;
+    };
+    let value = value.as_bytes().trim_ascii();
+    let credentials = match value.split_at_checked(7) {
+        Some((scheme, rest)) if scheme.eq_ignore_ascii_case(b"bearer ") => rest.trim_ascii(),
+        _ => value,
+    };
+    let token = token.as_bytes();
+    constant_time_eq(value, token) | constant_time_eq(credentials, token)
+}
+
+async fn require_auth(
+    State(token): State<Arc<str>>,
+    request: axum::extract::Request,
+    next: Next,
+) -> Response {
+    if is_authorized(request.headers(), &token) {
+        return next.run(request).await;
+    }
+    let mut response = error(
+        StatusCode::UNAUTHORIZED,
+        "missing or invalid Authorization header",
+    );
+    response
+        .headers_mut()
+        .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
+    response
 }
 
 fn parse_dpmm(s: &str) -> Result<u8, String> {
@@ -278,12 +340,12 @@ fn app(config: Config) -> Router {
     });
     let timeout = Duration::from_secs(config.timeout.max(1));
     let max_body = config.max_body;
+    let auth_token: Option<Arc<str>> = config.auth_token().map(Arc::from);
     let state = Arc::new(AppState {
         config,
         permits: Semaphore::new(concurrency.max(1)),
     });
-    Router::new()
-        .route("/health", get(|| async { "ok" }))
+    let conversions = Router::new()
         .route("/v1/printers/{dpmm}/labels/{size}", post(labelary))
         .route("/v1/printers/{dpmm}/labels/{size}/", post(labelary))
         .route(
@@ -294,7 +356,16 @@ fn app(config: Config) -> Router {
             "/v1/printers/{dpmm}/labels/{size}/{index}/",
             post(labelary_index),
         )
-        .route("/v1/convert", post(convert_query))
+        .route("/v1/convert", post(convert_query));
+    // `route_layer` runs the check only on matched routes and before the body
+    // is read; unknown paths still answer 404.
+    let conversions = match auth_token {
+        Some(token) => conversions.route_layer(middleware::from_fn_with_state(token, require_auth)),
+        None => conversions,
+    };
+    Router::new()
+        .route("/health", get(|| async { "ok" }))
+        .merge(conversions)
         .layer(DefaultBodyLimit::max(max_body))
         .layer(TimeoutLayer::with_status_code(
             StatusCode::REQUEST_TIMEOUT,
@@ -320,6 +391,11 @@ async fn main() -> std::io::Result<()> {
     let config = Config::parse();
     let listener = tokio::net::TcpListener::bind(config.listen).await?;
     tracing::info!("listening on {}", config.listen);
+    if config.auth_token().is_some() {
+        tracing::info!("authorization required on conversion routes");
+    } else {
+        tracing::warn!("ZPL2PDF_AUTH_TOKEN is empty, conversion routes are open");
+    }
     axum::serve(listener, app(config))
         .with_graceful_shutdown(shutdown_signal())
         .await
@@ -344,6 +420,68 @@ mod tests {
             .body(Body::from(body.to_string()))
             .unwrap();
         app(test_config()).oneshot(req).await.unwrap()
+    }
+
+    fn auth_config(token: &str) -> Config {
+        Config::parse_from([
+            "zpl2pdf-server",
+            "--concurrency",
+            "2",
+            "--auth-token",
+            token,
+        ])
+    }
+
+    async fn send_auth(config: Config, uri: &str, authorization: Option<&str>) -> Response {
+        let mut req = HttpRequest::post(uri).header("Accept", "application/pdf");
+        if let Some(value) = authorization {
+            req = req.header("Authorization", value);
+        }
+        app(config)
+            .oneshot(req.body(Body::from(ZPL)).unwrap())
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn auth_required_when_token_set() {
+        let uris = [
+            "/v1/printers/8dpmm/labels/4x6/",
+            "/v1/printers/8dpmm/labels/4x6/0/",
+            "/v1/convert",
+        ];
+        for uri in uris {
+            let res = send_auth(auth_config("s3cret"), uri, None).await;
+            assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "{uri}");
+            assert_eq!(res.headers()["www-authenticate"], "Bearer");
+            for bad in [
+                "Bearer wrong",
+                "Bearer s3cre",
+                "Basic s3cret",
+                "s3cret2",
+                "",
+            ] {
+                let res = send_auth(auth_config("s3cret"), uri, Some(bad)).await;
+                assert_eq!(res.status(), StatusCode::UNAUTHORIZED, "{uri} {bad:?}");
+            }
+            for good in ["Bearer s3cret", "bearer  s3cret ", "s3cret"] {
+                let res = send_auth(auth_config("s3cret"), uri, Some(good)).await;
+                assert_eq!(res.status(), StatusCode::OK, "{uri} {good:?}");
+            }
+        }
+        let req = HttpRequest::get("/health").body(Body::empty()).unwrap();
+        let res = app(auth_config("s3cret")).oneshot(req).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn auth_disabled_when_token_empty() {
+        for token in ["", "   "] {
+            let res = send_auth(auth_config(token), "/v1/convert", None).await;
+            assert_eq!(res.status(), StatusCode::OK, "{token:?}");
+        }
+        let res = send_auth(test_config(), "/v1/convert", Some("Bearer anything")).await;
+        assert_eq!(res.status(), StatusCode::OK);
     }
 
     #[tokio::test]

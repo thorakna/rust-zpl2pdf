@@ -3,3 +3,4 @@ out
 .git
 tests
 tools
+.env
